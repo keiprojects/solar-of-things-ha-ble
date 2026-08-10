@@ -4,15 +4,15 @@
     "step": {
       "user": {
         "title": "Connect to Solar of Things over Bluetooth",
-        "description": "Use the BLE address of the WiFi Relabs/Siseli data logger and its 32-character BLE AES key. Close Solar of Things proximal monitoring while testing because the logger may allow only one active BLE client.",
+        "description": "The AES key is optional. Leave it blank to use keyless probe mode: Home Assistant will connect to the RWB1 and replay a captured read-only Solar of Things packet to verify the logger answers. Decoded inverter telemetry still requires the application AES key until automatic credential retrieval is implemented. Close Solar of Things Proximal Monitoring while testing because the logger may allow only one active BLE client.",
         "data": {
           "address": "BLE address",
-          "aes_key": "BLE AES key (32 hex characters)"
+          "aes_key": "BLE AES key (optional, 32 hex characters)"
         }
       }
     },
     "error": {
-      "cannot_connect": "Could not read the inverter over BLE. Confirm the address/key, Bluetooth range, and that the Solar of Things app is not holding the connection.",
+      "cannot_connect": "Could not get a Solar of Things application-level response over BLE. Confirm Bluetooth range and close Proximal Monitoring in the phone app.",
       "invalid_aes_key": "The BLE AES key must be exactly 32 hexadecimal characters."
     },
     "abort": {
