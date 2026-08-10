@@ -33,7 +33,13 @@ class SolarOfThingsBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _async_validate(self, address: str, aes_key: str | None) -> None:
         client = SolarOfThingsBLEClient(self.hass, address, aes_key)
         try:
-            await client.async_poll()
+            if aes_key:
+                await client.async_poll()
+            else:
+                # In keyless mode only require a real GATT connection with the
+                # expected FEE7/FED5/FED6 service. The encrypted application
+                # probe runs after setup and reports its own diagnostic status.
+                await client.async_validate_gatt()
         finally:
             await client.async_disconnect()
 
