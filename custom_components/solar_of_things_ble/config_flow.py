@@ -30,7 +30,7 @@ class SolarOfThingsBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._discovered_address: str | None = None
 
-    async def _async_validate(self, address: str, aes_key: str) -> None:
+    async def _async_validate(self, address: str, aes_key: str | None) -> None:
         client = SolarOfThingsBLEClient(self.hass, address, aes_key)
         try:
             await client.async_poll()
@@ -53,17 +53,21 @@ class SolarOfThingsBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Configure a BLE address and the per-device envelope key."""
+        """Configure the logger; AES is optional while reverse engineering."""
         errors: dict[str, str] = {}
         suggested_address = self._discovered_address or ""
 
         if user_input is not None:
             address = _normalise_address(user_input[CONF_ADDRESS])
-            try:
-                aes_key = normalise_key(user_input[CONF_AES_KEY])
-            except ValueError:
-                errors[CONF_AES_KEY] = "invalid_aes_key"
-            else:
+            raw_key = str(user_input.get(CONF_AES_KEY) or "").strip()
+            aes_key: str | None = None
+            if raw_key:
+                try:
+                    aes_key = normalise_key(raw_key)
+                except ValueError:
+                    errors[CONF_AES_KEY] = "invalid_aes_key"
+
+            if not errors:
                 try:
                     await self._async_validate(address, aes_key)
                 except Exception as err:
@@ -73,9 +77,12 @@ class SolarOfThingsBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if self.unique_id is None:
                         await self.async_set_unique_id(address)
                         self._abort_if_unique_id_configured()
+                    data: dict[str, Any] = {CONF_ADDRESS: address}
+                    if aes_key:
+                        data[CONF_AES_KEY] = aes_key
                     return self.async_create_entry(
                         title=f"Solar of Things BLE {address[-5:]}",
-                        data={CONF_ADDRESS: address, CONF_AES_KEY: aes_key},
+                        data=data,
                     )
 
         schema = vol.Schema(
@@ -84,7 +91,10 @@ class SolarOfThingsBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_ADDRESS,
                     default=(user_input or {}).get(CONF_ADDRESS, suggested_address),
                 ): cv.string,
-                vol.Required(CONF_AES_KEY): cv.string,
+                vol.Optional(
+                    CONF_AES_KEY,
+                    default=(user_input or {}).get(CONF_AES_KEY, ""),
+                ): cv.string,
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
