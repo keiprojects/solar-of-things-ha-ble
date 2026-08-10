@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect to Solar of Things over Bluetooth",
-        "description": "The AES key is optional. Leave it blank to use keyless probe mode: Home Assistant will connect to the RWB1 and replay a captured read-only Solar of Things packet to verify the logger answers. Decoded inverter telemetry still requires the application AES key until automatic credential retrieval is implemented. Close Solar of Things Proximal Monitoring while testing because the logger may allow only one active BLE client.",
+        "description": "The AES key is optional. Leave it blank to add the RWB1 using its real FEE7/FED5/FED6 GATT connection. After setup, Home Assistant will run a captured read-only Solar of Things probe and report whether the application layer replies. Decoded inverter telemetry still requires the application AES key until automatic credential retrieval is implemented. Close Solar of Things Proximal Monitoring while testing because the logger may allow only one active BLE client.",
         "data": {
           "address": "BLE address",
           "aes_key": "BLE AES key (optional, 32 hex characters)"
@@ -12,7 +12,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Could not get a Solar of Things application-level response over BLE. Confirm Bluetooth range and close Proximal Monitoring in the phone app.",
+      "cannot_connect": "Could not establish the expected RWB1 GATT connection. Confirm Bluetooth range and close Proximal Monitoring in the phone app.",
       "invalid_aes_key": "The BLE AES key must be exactly 32 hexadecimal characters."
     },
     "abort": {
