@@ -103,6 +103,9 @@ class SolarOfThingsBLEClient:
                 list(notify_char.properties),
             )
             await client.start_notify(NOTIFY_UUID, self._notification)
+            # The Android app has a small gap between enabling indications and
+            # the first application write. Give the RWB1 the same settling time.
+            await asyncio.sleep(0.15)
         except Exception:
             try:
                 await client.disconnect()
@@ -186,8 +189,14 @@ class SolarOfThingsBLEClient:
     async def _write_application_payload(
         self, client: BleakClient, payload: bytes
     ) -> None:
-        mtu = getattr(client, "mtu_size", 23) or 23
-        chunk_size = max(18, min(192, int(mtu) - 6))
+        # ATT Write Request leaves MTU-3 bytes for the characteristic value.
+        # The RWB1 then uses three value bytes for [index,total,length], so the
+        # application payload per fragment is MTU-6. The Android HCI capture
+        # shows the same 216-byte request being sent as 12x18-byte fragments at
+        # a small MTU and as one 216-byte fragment after a larger MTU was
+        # negotiated. Do not artificially cap this at 192 bytes.
+        mtu = int(getattr(client, "mtu_size", 23) or 23)
+        chunk_size = max(1, min(255, mtu - 6))
         fragments = fragment_payload(payload, chunk_size)
         _LOGGER.debug(
             "Solar of Things FED5 write: payload=%s bytes mtu=%s chunk=%s fragments=%s",
