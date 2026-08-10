@@ -1,0 +1,19 @@
+{
+  "domain": "solar_of_things_ble",
+  "name": "Solar of Things BLE",
+  "version": "0.1.0",
+  "codeowners": ["@keiprojects"],
+  "config_flow": true,
+  "documentation": "https://github.com/keiprojects/solar-of-things-ha-ble",
+  "issue_tracker": "https://github.com/keiprojects/solar-of-things-ha-ble/issues",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "homeassistant": "2026.6.0",
+  "dependencies": ["bluetooth_adapters"],
+  "bluetooth": [
+    {
+      "service_uuid": "0000fee7-0000-1000-8000-00805f9b34fb",
+      "connectable": true
+    }
+  ]
+}
