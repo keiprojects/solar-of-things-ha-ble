@@ -12,6 +12,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    EntityCategory,
     PERCENTAGE,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
@@ -33,6 +34,18 @@ class SolarBLESensorDescription(SensorEntityDescription):
 
 
 SENSORS: tuple[SolarBLESensorDescription, ...] = (
+    SolarBLESensorDescription(
+        key="probe_status",
+        name="BLE Probe Status",
+        icon="mdi:bluetooth-connect",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SolarBLESensorDescription(
+        key="probe_response_bytes",
+        name="BLE Probe Response Bytes",
+        icon="mdi:message-reply-text-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
     SolarBLESensorDescription(
         key="pv_power_w", name="PV Input Power", device_class=SensorDeviceClass.POWER,
         native_unit_of_measurement=UnitOfPower.WATT, state_class=SensorStateClass.MEASUREMENT,
