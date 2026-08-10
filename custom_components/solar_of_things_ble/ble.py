@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from typing import Any
 
@@ -9,7 +10,13 @@ from bleak import BleakClient
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 
-from .const import NOTIFY_UUID, READ_COMMANDS, SERVICE_UUID, WRITE_UUID
+from .const import (
+    CAPTURED_READ_PROBE_B64,
+    NOTIFY_UUID,
+    READ_COMMANDS,
+    SERVICE_UUID,
+    WRITE_UUID,
+)
 from .protocol import (
     build_read_request,
     decrypt_envelope,
@@ -30,13 +37,19 @@ class SolarOfThingsBLEError(RuntimeError):
 class SolarOfThingsBLEClient:
     """Maintain one local BLE connection and issue sequential read commands."""
 
-    def __init__(self, hass: HomeAssistant, address: str, aes_key: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        address: str,
+        aes_key: str | None = None,
+    ) -> None:
         self.hass = hass
         self.address = address.upper()
-        self.aes_key = aes_key
+        self.aes_key = aes_key or None
         self._client: BleakClient | None = None
         self._command_lock = asyncio.Lock()
-        self._response_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._decoded_response_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._raw_response_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._rx_parts: dict[int, bytes] = {}
         self._rx_total: int | None = None
 
@@ -70,9 +83,13 @@ class SolarOfThingsBLEClient:
                     f"Device {self.address} does not expose Solar of Things service FEE7"
                 )
             if client.services.get_characteristic(WRITE_UUID) is None:
-                raise SolarOfThingsBLEError("Solar of Things write characteristic FED5 not found")
+                raise SolarOfThingsBLEError(
+                    "Solar of Things write characteristic FED5 not found"
+                )
             if client.services.get_characteristic(NOTIFY_UUID) is None:
-                raise SolarOfThingsBLEError("Solar of Things response characteristic FED6 not found")
+                raise SolarOfThingsBLEError(
+                    "Solar of Things response characteristic FED6 not found"
+                )
             await client.start_notify(NOTIFY_UUID, self._notification)
         except Exception:
             try:
@@ -109,42 +126,99 @@ class SolarOfThingsBLEClient:
             self._rx_total = total
 
         self._rx_parts[index] = fragment
-        if all(part in self._rx_parts for part in range(1, total + 1)):
-            payload = b"".join(self._rx_parts[part] for part in range(1, total + 1))
-            self._rx_parts = {}
-            self._rx_total = None
-            try:
-                decoded = decrypt_envelope(payload, self.aes_key)
-            except Exception as err:
-                _LOGGER.debug("Could not decrypt Solar of Things BLE response: %s", err)
-                return
-            self._response_queue.put_nowait(decoded)
+        if not all(part in self._rx_parts for part in range(1, total + 1)):
+            return
 
-    async def _send_read(self, command: str, cmd_no: str) -> str:
-        async with self._command_lock:
-            client = await self._ensure_connected()
+        payload = b"".join(self._rx_parts[part] for part in range(1, total + 1))
+        self._rx_parts = {}
+        self._rx_total = None
 
-            while not self._response_queue.empty():
+        self._raw_response_queue.put_nowait(payload)
+
+        if not self.aes_key:
+            return
+
+        try:
+            decoded = decrypt_envelope(payload, self.aes_key)
+        except Exception as err:
+            _LOGGER.debug("Could not decrypt Solar of Things BLE response: %s", err)
+            return
+        self._decoded_response_queue.put_nowait(decoded)
+
+    def _clear_response_queues(self) -> None:
+        for queue in (self._raw_response_queue, self._decoded_response_queue):
+            while not queue.empty():
                 try:
-                    self._response_queue.get_nowait()
+                    queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
 
-            envelope = build_read_request(command, cmd_no)
-            encrypted = encrypt_envelope(envelope, self.aes_key)
+    async def _write_application_payload(
+        self, client: BleakClient, payload: bytes
+    ) -> None:
+        mtu = getattr(client, "mtu_size", 23) or 23
+        chunk_size = max(18, min(192, int(mtu) - 6))
+        for fragment in fragment_payload(payload, chunk_size):
+            await client.write_gatt_char(WRITE_UUID, fragment, response=True)
 
-            # ATT write payload is MTU-3. Reserve another 3 bytes for the RWB1
-            # fragment header. The Android app used 18-byte fragments before
-            # MTU negotiation and capped its larger fragments at 192 bytes.
-            mtu = getattr(client, "mtu_size", 23) or 23
-            chunk_size = max(18, min(192, int(mtu) - 6))
-            for fragment in fragment_payload(encrypted, chunk_size):
-                await client.write_gatt_char(WRITE_UUID, fragment, response=True)
+    async def async_probe(self) -> dict[str, Any]:
+        """Replay a captured read-only packet and verify the logger answers."""
+        async with self._command_lock:
+            client = await self._ensure_connected()
+            self._clear_response_queues()
+            payload = CAPTURED_READ_PROBE_B64.encode("ascii")
+            await self._write_application_payload(client, payload)
 
             try:
                 async with asyncio.timeout(4.0):
-                    response = await self._response_queue.get()
+                    response = await self._raw_response_queue.get()
             except TimeoutError as err:
+                raise SolarOfThingsBLEError(
+                    "BLE connected, but the logger did not answer the captured read probe"
+                ) from err
+
+            try:
+                base64.b64decode(response, validate=True)
+                response_is_base64 = True
+            except Exception:
+                response_is_base64 = False
+
+            _LOGGER.debug(
+                "Solar of Things keyless probe response: %d bytes, base64=%s, prefix=%r",
+                len(response),
+                response_is_base64,
+                response[:24],
+            )
+            return {
+                "ble_connected": True,
+                "probe_status": "responding",
+                "probe_response_bytes": len(response),
+                "probe_response_base64": response_is_base64,
+            }
+
+    async def _send_read(self, command: str, cmd_no: str) -> str:
+        if not self.aes_key:
+            raise SolarOfThingsBLEError(
+                "Decoded reads require the Solar of Things application AES key"
+            )
+
+        async with self._command_lock:
+            client = await self._ensure_connected()
+            self._clear_response_queues()
+
+            envelope = build_read_request(command, cmd_no)
+            encrypted = encrypt_envelope(envelope, self.aes_key)
+            await self._write_application_payload(client, encrypted)
+
+            try:
+                async with asyncio.timeout(4.0):
+                    response = await self._decoded_response_queue.get()
+            except TimeoutError as err:
+                if not self._raw_response_queue.empty():
+                    raise SolarOfThingsBLEError(
+                        f"{command} replied, but the response could not be decrypted; "
+                        "check the AES key"
+                    ) from err
                 raise SolarOfThingsBLEError(
                     f"Timed out waiting for {command} response"
                 ) from err
@@ -152,7 +226,10 @@ class SolarOfThingsBLEClient:
             return extract_serial_response(response)
 
     async def async_poll(self) -> dict[str, Any]:
-        """Poll the read-only live command set and return merged telemetry."""
+        """Poll decoded telemetry, or run the keyless application-level probe."""
+        if not self.aes_key:
+            return await self.async_probe()
+
         values: dict[str, Any] = {}
         try:
             for command, cmd_no in READ_COMMANDS:
@@ -162,6 +239,9 @@ class SolarOfThingsBLEClient:
         except Exception:
             await self.async_disconnect()
             raise
+
+        values["ble_connected"] = True
+        values["probe_status"] = "decoded"
         return finalise_telemetry(values)
 
     async def async_disconnect(self) -> None:
