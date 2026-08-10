@@ -1,0 +1,22 @@
+{
+  "title": "Solar of Things BLE",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Solar of Things over Bluetooth",
+        "description": "Use the BLE address of the WiFi Relabs/Siseli data logger and its 32-character BLE AES key. Close Solar of Things proximal monitoring while testing because the logger may allow only one active BLE client.",
+        "data": {
+          "address": "BLE address",
+          "aes_key": "BLE AES key (32 hex characters)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not read the inverter over BLE. Confirm the address/key, Bluetooth range, and that the Solar of Things app is not holding the connection.",
+      "invalid_aes_key": "The BLE AES key must be exactly 32 hexadecimal characters."
+    },
+    "abort": {
+      "already_configured": "This Bluetooth device is already configured."
+    }
+  }
+}
