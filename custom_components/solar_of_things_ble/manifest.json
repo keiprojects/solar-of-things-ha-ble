@@ -1,7 +1,7 @@
 {
   "domain": "solar_of_things_ble",
   "name": "Solar of Things BLE",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "codeowners": ["@keiprojects"],
   "config_flow": true,
   "documentation": "https://github.com/keiprojects/solar-of-things-ha-ble",
