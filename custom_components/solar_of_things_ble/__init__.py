@@ -16,10 +16,12 @@ PLATFORMS = [Platform.SENSOR]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up one Solar of Things BLE data logger."""
     hass.data.setdefault(DOMAIN, {})
+    raw_key = entry.data.get(CONF_AES_KEY)
+    aes_key = normalise_key(raw_key) if raw_key else None
     client = SolarOfThingsBLEClient(
         hass,
         entry.data[CONF_ADDRESS],
-        normalise_key(entry.data[CONF_AES_KEY]),
+        aes_key,
     )
     coordinator = SolarOfThingsBLECoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
