@@ -54,6 +54,7 @@ class SolarOfThingsBLEClient:
         self._rx_total: int | None = None
 
     def _disconnected(self, _client: BleakClient) -> None:
+        _LOGGER.debug("Solar of Things BLE device %s disconnected", self.address)
         self._client = None
         self._rx_parts.clear()
         self._rx_total = None
@@ -78,18 +79,29 @@ class SolarOfThingsBLEClient:
         )
         try:
             await client.connect()
-            if client.services.get_service(SERVICE_UUID) is None:
+            service = client.services.get_service(SERVICE_UUID)
+            write_char = client.services.get_characteristic(WRITE_UUID)
+            notify_char = client.services.get_characteristic(NOTIFY_UUID)
+            if service is None:
                 raise SolarOfThingsBLEError(
                     f"Device {self.address} does not expose Solar of Things service FEE7"
                 )
-            if client.services.get_characteristic(WRITE_UUID) is None:
+            if write_char is None:
                 raise SolarOfThingsBLEError(
                     "Solar of Things write characteristic FED5 not found"
                 )
-            if client.services.get_characteristic(NOTIFY_UUID) is None:
+            if notify_char is None:
                 raise SolarOfThingsBLEError(
                     "Solar of Things response characteristic FED6 not found"
                 )
+
+            _LOGGER.debug(
+                "Solar of Things GATT ready: address=%s write_properties=%s "
+                "notify_properties=%s",
+                self.address,
+                list(write_char.properties),
+                list(notify_char.properties),
+            )
             await client.start_notify(NOTIFY_UUID, self._notification)
         except Exception:
             try:
@@ -106,14 +118,32 @@ class SolarOfThingsBLEClient:
         )
         return client
 
+    async def async_validate_gatt(self) -> dict[str, Any]:
+        """Verify that HA can connect and access the expected RWB1 GATT service."""
+        client = await self._ensure_connected()
+        return {
+            "ble_connected": bool(client.is_connected),
+            "probe_status": "gatt_connected",
+            "probe_response_bytes": 0,
+        }
+
     def _notification(self, _sender: Any, data: bytearray) -> None:
         raw = bytes(data)
         if len(raw) < 3:
-            _LOGGER.debug("Ignoring short Solar of Things BLE fragment")
+            _LOGGER.debug(
+                "Solar of Things received short FED6 notification: %s", raw.hex()
+            )
             return
 
         index, total, length = raw[0], raw[1], raw[2]
         fragment = raw[3 : 3 + length]
+        _LOGGER.debug(
+            "Solar of Things FED6 fragment index=%s total=%s length=%s actual=%s",
+            index,
+            total,
+            length,
+            len(fragment),
+        )
         if index < 1 or total < 1 or index > total or len(fragment) != length:
             _LOGGER.debug("Ignoring malformed Solar of Things BLE fragment")
             return
@@ -158,11 +188,19 @@ class SolarOfThingsBLEClient:
     ) -> None:
         mtu = getattr(client, "mtu_size", 23) or 23
         chunk_size = max(18, min(192, int(mtu) - 6))
-        for fragment in fragment_payload(payload, chunk_size):
+        fragments = fragment_payload(payload, chunk_size)
+        _LOGGER.debug(
+            "Solar of Things FED5 write: payload=%s bytes mtu=%s chunk=%s fragments=%s",
+            len(payload),
+            mtu,
+            chunk_size,
+            len(fragments),
+        )
+        for fragment in fragments:
             await client.write_gatt_char(WRITE_UUID, fragment, response=True)
 
     async def async_probe(self) -> dict[str, Any]:
-        """Replay a captured read-only packet and verify the logger answers."""
+        """Replay a captured read-only packet and report whether the logger answers."""
         async with self._command_lock:
             client = await self._ensure_connected()
             self._clear_response_queues()
@@ -172,10 +210,16 @@ class SolarOfThingsBLEClient:
             try:
                 async with asyncio.timeout(4.0):
                     response = await self._raw_response_queue.get()
-            except TimeoutError as err:
-                raise SolarOfThingsBLEError(
-                    "BLE connected, but the logger did not answer the captured read probe"
-                ) from err
+            except TimeoutError:
+                _LOGGER.debug(
+                    "Solar of Things BLE application probe timed out; GATT connection remains valid"
+                )
+                return {
+                    "ble_connected": bool(client.is_connected),
+                    "probe_status": "no_response",
+                    "probe_response_bytes": 0,
+                    "probe_response_base64": None,
+                }
 
             try:
                 base64.b64decode(response, validate=True)
